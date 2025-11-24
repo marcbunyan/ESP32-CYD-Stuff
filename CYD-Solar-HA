@@ -1,0 +1,314 @@
+esphome:
+  name: esphome-web-4620dc
+  friendly_name: Solar Dashboard
+  libraries:
+    - SPI
+
+esp32:
+  board: esp32dev
+  framework:
+    type: arduino
+
+wifi:
+  ssid: !secret wifi_ssid
+  password: !secret wifi_password
+
+logger:
+  level: DEBUG
+
+api:
+ota:
+  - platform: esphome
+
+color:
+  - id: c_black
+    hex: "000000"
+  - id: c_white
+    hex: "FFFFFF"
+  - id: c_red
+    hex: "FF0000"
+  - id: c_yellow
+    hex: "FFFF00"
+  - id: c_green
+    hex: "00FF00"
+  - id: c_grey
+    hex: "444444"
+  - id: c_blue
+    hex: "3498DB"
+  - id: c_orange
+    hex: "E67E22"
+  - id: c_light_grey
+    hex: "AAAAAA"
+
+font:
+  - file: "gfonts://Roboto"
+    id: roboto_xl
+    size: 42
+  - file: "gfonts://Arimo"
+    id: arimo20
+    size: 22
+  - file: "gfonts://Roboto"
+    id: roboto_med
+    size: 26
+  - file: "gfonts://Roboto"
+    id: roboto_small
+    size: 14
+
+# Backlight control
+output:
+  - platform: ledc
+    pin: GPIO21
+    id: backlight_pwm
+
+light:
+  - platform: monochromatic
+    output: backlight_pwm
+    name: "Display Backlight"
+    id: backlight
+    restore_mode: ALWAYS_ON
+
+# Include all three sensors
+sensor:
+  - platform: homeassistant
+    name: "Solar Autonomy"
+    id: solar_autonomy
+    entity_id: sensor.solarnet_relative_autonomy
+    unit_of_measurement: "%"
+    accuracy_decimals: 0
+    on_value:
+      then:
+        - component.update: esp_display
+  
+  - platform: homeassistant
+    name: "PV Power"
+    id: pv_power
+    entity_id: sensor.solarnet_power_photovoltaics
+    unit_of_measurement: "W"
+    accuracy_decimals: 1
+    on_value:
+      then:
+        - component.update: esp_display
+        
+  - platform: homeassistant
+    name: "House Load"
+    id: house_load
+    entity_id: sensor.solarnet_power_load
+    unit_of_measurement: "W"
+    accuracy_decimals: 1
+    on_value:
+      then:
+        - component.update: esp_display
+
+# SPI Bus for Display
+spi:
+  - id: tft
+    clk_pin: GPIO14
+    mosi_pin: GPIO13
+    miso_pin: GPIO12
+
+# Display configuration 
+display:
+  - platform: ili9xxx
+    id: esp_display
+    model: ILI9341
+    spi_id: tft
+    cs_pin: GPIO15
+    dc_pin: GPIO2
+    invert_colors: false
+    color_palette: 8BIT
+    auto_clear_enabled: true
+    rotation: 0
+    dimensions: 
+      width: 320
+      height: 240
+    lambda: |-
+      // 1. Clear screen to Black
+      it.fill(id(c_black));
+
+      // 2. Safety Check for main sensor
+      if (!id(solar_autonomy).has_state()) {
+        it.print(160, 120, id(arimo20), id(c_white), TextAlign::CENTER, "Waiting for HA...");
+        return; 
+      }
+
+      // Define screen dimensions
+      int screen_width = it.get_width();   // 320
+      int screen_height = it.get_height(); // 240
+      
+      // Divide screen in half for layout
+      int half_height = screen_height / 2; // 120px
+      
+      // -------------------------------
+      // WIDGET 1: FLATTENED ELLIPTICAL GAUGE
+      // -------------------------------
+      
+      // Get the value
+      float autonomy = id(solar_autonomy).state;
+      
+      // Clamp value 0-100
+      if (autonomy < 0) autonomy = 0;
+      if (autonomy > 100) autonomy = 100;
+
+      // Gauge parameters - elliptical shape (wider than tall)
+      int center_x = screen_width / 2;  // Center horizontally (160px)
+      int center_y = 55;  // Position gauge higher up
+      
+      // Horizontal and vertical radii for elliptical shape
+      int radius_x_outer = 85;  // Wider horizontally
+      int radius_y_outer = 45;  // Shorter vertically
+      
+      int radius_x_inner = 77;
+      int radius_y_inner = 40;
+      
+      int radius_x_ticks = 72;
+      int radius_y_ticks = 37;
+      
+      // Angles for gauge arc (in radians) - approximately 150 degrees total
+      float start_angle = 4.1f;  // ~235 degrees
+      float end_angle = 5.3f;    // ~305 degrees (70 degrees difference)
+      float range = end_angle - start_angle;
+      
+      // Color Logic
+      Color gauge_color = id(c_green);
+      if (autonomy < 50) gauge_color = id(c_yellow);
+      if (autonomy < 20) gauge_color = id(c_red);
+
+      // Draw gauge background arc - using elliptical coordinates
+      for (float angle = start_angle; angle <= end_angle; angle += 0.01f) {
+        float x1 = center_x + radius_x_inner * cos(angle);
+        float y1 = center_y + radius_y_inner * sin(angle);
+        float x2 = center_x + radius_x_outer * cos(angle);
+        float y2 = center_y + radius_y_outer * sin(angle);
+        it.line(x1, y1, x2, y2, id(c_grey));
+      }
+      
+      // Draw colored portion of gauge based on value - using elliptical coordinates
+      float value_angle = start_angle + (autonomy/100.0f * range);
+      for (float angle = start_angle; angle <= value_angle; angle += 0.01f) {
+        float x1 = center_x + radius_x_inner * cos(angle);
+        float y1 = center_y + radius_y_inner * sin(angle);
+        float x2 = center_x + radius_x_outer * cos(angle);
+        float y2 = center_y + radius_y_outer * sin(angle);
+        it.line(x1, y1, x2, y2, gauge_color);
+      }
+      
+      // Draw tick marks and labels - using elliptical coordinates
+      for (int tick = 0; tick <= 100; tick += 25) {
+        float tick_angle = start_angle + (tick/100.0f * range);
+        float tick_x_start = center_x + radius_x_ticks * cos(tick_angle);
+        float tick_y_start = center_y + radius_y_ticks * sin(tick_angle);
+        float tick_x_end = center_x + radius_x_outer * cos(tick_angle);
+        float tick_y_end = center_y + radius_y_outer * sin(tick_angle);
+        
+        // Draw major tick
+        it.line(tick_x_start, tick_y_start, tick_x_end, tick_y_end, id(c_white));
+        
+        // Draw labels for 0, 25, 50, 75, 100
+        float label_x = center_x + (radius_x_outer + 10) * cos(tick_angle);
+        float label_y = center_y + (radius_y_outer + 7) * sin(tick_angle);
+        it.printf(label_x, label_y, id(roboto_small), id(c_light_grey), TextAlign::CENTER, "%d", tick);
+      }
+      
+      // Draw needle - using elliptical coordinates
+      float needle_angle = start_angle + (autonomy/100.0f * range);
+      float needle_x = center_x + radius_x_inner * cos(needle_angle) * 0.9;  // Slightly shorter
+      float needle_y = center_y + radius_y_inner * sin(needle_angle) * 0.9;
+      it.line(center_x, center_y, needle_x, needle_y, id(c_white));
+      
+      // Draw center hub of needle
+      it.filled_circle(center_x, center_y, 5, id(c_white));
+
+      // Title - just 15px below the center of gauge
+      it.print(center_x, center_y + 15, id(arimo20), id(c_white), TextAlign::CENTER, "Solar Autonomy");
+      
+      // Percentage display - below title with minimal spacing
+      it.printf(center_x, center_y + 40, id(roboto_xl), id(c_white), TextAlign::CENTER, "%.0f%%", autonomy);
+      
+      // Calculate position for divider line - exactly half screen
+      int divider_y = half_height;  // 120px
+      
+      // Draw divider line
+      it.line(20, divider_y, 300, divider_y, id(c_grey));
+      it.line(20, divider_y + 1, 300, divider_y + 1, id(c_grey));
+
+      // -------------------------------
+      // WIDGET 2: PV POWER (BOTTOM LEFT)
+      // -------------------------------
+      if (id(pv_power).has_state()) {
+        float pv = id(pv_power).state;
+        
+        // Draw widget box - larger box using full bottom half
+        int pv_x = 20;
+        int pv_y = divider_y + 10;  // 10px below divider
+        int pv_w = 135;
+        int pv_h = half_height - 20;  // Use nearly half screen height
+        
+        it.rectangle(pv_x, pv_y, pv_w, pv_h, id(c_blue));
+        
+        // Label at top
+        it.print(pv_x + pv_w/2, pv_y + 20, id(arimo20), id(c_white), TextAlign::CENTER, "Sunlight");
+        
+        // Value centered in box - now with one decimal place precision
+        if (pv < 1000) {
+          it.printf(pv_x + pv_w/2, pv_y + pv_h/2 + 10, id(roboto_med), id(c_white), TextAlign::CENTER, "%.1f W", pv);
+        } else {
+          it.printf(pv_x + pv_w/2, pv_y + pv_h/2 + 10, id(roboto_med), id(c_white), TextAlign::CENTER, "%.1f kW", pv/1000);
+        }
+      }
+      
+      // -------------------------------
+      // WIDGET 3: HOUSE LOAD/EXPORT (BOTTOM RIGHT)
+      // -------------------------------
+      if (id(house_load).has_state()) {
+        // Get current load value
+        float load = id(house_load).state;
+        
+        // Debug the current value
+        ESP_LOGD("DISPLAY", "House load value: %.1f W", load);
+        
+        // CORRECTED LOGIC:
+        // Positive value = Exporting power
+        // Negative value = Consuming power (load)
+        bool is_exporting = (load > 0);
+        ESP_LOGD("DISPLAY", "Is exporting: %s", is_exporting ? "YES" : "NO");
+        
+        // Draw widget box
+        int load_x = 165;
+        int load_y = divider_y + 10;  // 10px below divider
+        int load_w = 135;
+        int load_h = half_height - 20;  // Use nearly half screen height
+        
+        // Use green for export, orange for load
+        Color box_color = is_exporting ? id(c_green) : id(c_orange);
+        it.rectangle(load_x, load_y, load_w, load_h, box_color);
+        
+        if (is_exporting) {
+          // EXPORT mode (positive value)
+          it.print(load_x + load_w/2, load_y + 20, id(arimo20), id(c_white), TextAlign::CENTER, "House Export");
+          
+          // Show with a + sign
+          float export_value = load;  // Already positive
+          
+          if (export_value < 1000) {
+            it.printf(load_x + load_w/2, load_y + load_h/2 + 10, id(roboto_med), id(c_white), 
+                    TextAlign::CENTER, "+%.1f W", export_value);
+          } else {
+            it.printf(load_x + load_w/2, load_y + load_h/2 + 10, id(roboto_med), id(c_white), 
+                    TextAlign::CENTER, "+%.1f kW", export_value/1000);
+          }
+        } else {
+          // LOAD mode (negative or zero value)
+          it.print(load_x + load_w/2, load_y + 20, id(arimo20), id(c_white), TextAlign::CENTER, "House Load");
+          
+          // Display absolute value (no minus sign)
+          float load_value = fabs(load);  // Get absolute value
+          
+          if (load_value < 1000) {
+            it.printf(load_x + load_w/2, load_y + load_h/2 + 10, id(roboto_med), id(c_white), 
+                    TextAlign::CENTER, "%.1f W", load_value);
+          } else {
+            it.printf(load_x + load_w/2, load_y + load_h/2 + 10, id(roboto_med), id(c_white), 
+                    TextAlign::CENTER, "%.1f kW", load_value/1000);
+          }
+        }
+      }
