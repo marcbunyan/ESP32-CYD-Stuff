@@ -260,15 +260,13 @@ display:
       // WIDGET 3: HOUSE LOAD/EXPORT (BOTTOM RIGHT)
       // -------------------------------
       if (id(house_load).has_state()) {
-        // Get house load value
+        // Get house load value directly from sensor
         float load = id(house_load).state;
         
         // Debug the current value
         ESP_LOGD("DISPLAY", "House load value: %.1f W", load);
         
-        // CORRECTED LOGIC:
-        // - Negative value = House is exporting power (sending to grid)
-        // - Positive value = House is consuming power (importing from grid or solar)
+        // IMPORTANT: The house load is negative when exporting power
         bool is_exporting = (load < 0);
         ESP_LOGD("DISPLAY", "Is exporting: %s", is_exporting ? "YES" : "NO");
         
