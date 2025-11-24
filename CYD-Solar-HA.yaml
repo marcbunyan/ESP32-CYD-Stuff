@@ -260,16 +260,16 @@ display:
       // WIDGET 3: HOUSE LOAD/EXPORT (BOTTOM RIGHT)
       // -------------------------------
       if (id(house_load).has_state()) {
-        // Get current load value
+        // Get house load value
         float load = id(house_load).state;
         
         // Debug the current value
         ESP_LOGD("DISPLAY", "House load value: %.1f W", load);
         
         // CORRECTED LOGIC:
-        // Positive value = Exporting power
-        // Negative value = Consuming power (load)
-        bool is_exporting = (load > 0);
+        // - Negative value = House is exporting power (sending to grid)
+        // - Positive value = House is consuming power (importing from grid or solar)
+        bool is_exporting = (load < 0);
         ESP_LOGD("DISPLAY", "Is exporting: %s", is_exporting ? "YES" : "NO");
         
         // Draw widget box
@@ -283,11 +283,11 @@ display:
         it.rectangle(load_x, load_y, load_w, load_h, box_color);
         
         if (is_exporting) {
-          // EXPORT mode (positive value)
+          // EXPORT mode (negative value in sensor)
           it.print(load_x + load_w/2, load_y + 20, id(arimo20), id(c_white), TextAlign::CENTER, "House Export");
           
-          // Show with a + sign
-          float export_value = load;  // Already positive
+          // Show absolute value with a + sign
+          float export_value = fabs(load);  // Convert to positive
           
           if (export_value < 1000) {
             it.printf(load_x + load_w/2, load_y + load_h/2 + 10, id(roboto_med), id(c_white), 
@@ -297,18 +297,16 @@ display:
                     TextAlign::CENTER, "+%.1f kW", export_value/1000);
           }
         } else {
-          // LOAD mode (negative or zero value)
+          // LOAD mode (positive value in sensor)
           it.print(load_x + load_w/2, load_y + 20, id(arimo20), id(c_white), TextAlign::CENTER, "House Load");
           
-          // Display absolute value (no minus sign)
-          float load_value = fabs(load);  // Get absolute value
-          
-          if (load_value < 1000) {
+          // Display as-is (already positive)
+          if (load < 1000) {
             it.printf(load_x + load_w/2, load_y + load_h/2 + 10, id(roboto_med), id(c_white), 
-                    TextAlign::CENTER, "%.1f W", load_value);
+                    TextAlign::CENTER, "%.1f W", load);
           } else {
             it.printf(load_x + load_w/2, load_y + load_h/2 + 10, id(roboto_med), id(c_white), 
-                    TextAlign::CENTER, "%.1f kW", load_value/1000);
+                    TextAlign::CENTER, "%.1f kW", load/1000);
           }
         }
       }
