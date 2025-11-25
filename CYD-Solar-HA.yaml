@@ -67,7 +67,7 @@ light:
     id: backlight
     restore_mode: ALWAYS_ON
 
-# Include all three sensors
+# Include all necessary sensors
 sensor:
   - platform: homeassistant
     name: "Solar Autonomy"
@@ -90,9 +90,9 @@ sensor:
         - component.update: esp_display
         
   - platform: homeassistant
-    name: "House Load"
-    id: house_load
-    entity_id: sensor.solarnet_power_load
+    name: "Grid Power"
+    id: grid_power
+    entity_id: sensor.solarnet_power_grid
     unit_of_measurement: "W"
     accuracy_decimals: 1
     on_value:
@@ -125,8 +125,8 @@ display:
       // 1. Clear screen to Black
       it.fill(id(c_black));
 
-      // 2. Safety Check for main sensor
-      if (!id(solar_autonomy).has_state()) {
+      // 2. Safety Check for main sensors
+      if (!id(solar_autonomy).has_state() || !id(pv_power).has_state() || !id(grid_power).has_state()) {
         it.print(160, 120, id(arimo20), id(c_white), TextAlign::CENTER, "Waiting for HA...");
         return; 
       }
@@ -142,8 +142,13 @@ display:
       // WIDGET 1: FLATTENED ELLIPTICAL GAUGE
       // -------------------------------
       
-      // Get the value
+      // Get the values
       float autonomy = id(solar_autonomy).state;
+      float pv = id(pv_power).state;
+      float grid = id(grid_power).state;
+      
+      // Debug all values
+      ESP_LOGD("DISPLAY", "PV: %.1f W, Grid: %.1f W, Autonomy: %.0f%%", pv, grid, autonomy);
       
       // Clamp value 0-100
       if (autonomy < 0) autonomy = 0;
@@ -234,77 +239,66 @@ display:
       // -------------------------------
       // WIDGET 2: PV POWER (BOTTOM LEFT)
       // -------------------------------
-      if (id(pv_power).has_state()) {
-        float pv = id(pv_power).state;
-        
-        // Draw widget box - larger box using full bottom half
-        int pv_x = 20;
-        int pv_y = divider_y + 10;  // 10px below divider
-        int pv_w = 135;
-        int pv_h = half_height - 20;  // Use nearly half screen height
-        
-        it.rectangle(pv_x, pv_y, pv_w, pv_h, id(c_blue));
-        
-        // Label at top
-        it.print(pv_x + pv_w/2, pv_y + 20, id(arimo20), id(c_white), TextAlign::CENTER, "Sunlight");
-        
-        // Value centered in box - now with one decimal place precision
-        if (pv < 1000) {
-          it.printf(pv_x + pv_w/2, pv_y + pv_h/2 + 10, id(roboto_med), id(c_white), TextAlign::CENTER, "%.1f W", pv);
-        } else {
-          it.printf(pv_x + pv_w/2, pv_y + pv_h/2 + 10, id(roboto_med), id(c_white), TextAlign::CENTER, "%.1f kW", pv/1000);
-        }
+      // Draw widget box - larger box using full bottom half
+      int pv_x = 20;
+      int pv_y = divider_y + 10;  // 10px below divider
+      int pv_w = 135;
+      int pv_h = half_height - 20;  // Use nearly half screen height
+      
+      it.rectangle(pv_x, pv_y, pv_w, pv_h, id(c_blue));
+      
+      // Label at top
+      it.print(pv_x + pv_w/2, pv_y + 20, id(arimo20), id(c_white), TextAlign::CENTER, "Sunlight");
+      
+      // Value centered in box - now with one decimal place precision
+      if (pv < 1000) {
+        it.printf(pv_x + pv_w/2, pv_y + pv_h/2 + 10, id(roboto_med), id(c_white), TextAlign::CENTER, "%.1f W", pv);
+      } else {
+        it.printf(pv_x + pv_w/2, pv_y + pv_h/2 + 10, id(roboto_med), id(c_white), TextAlign::CENTER, "%.1f kW", pv/1000);
       }
       
       // -------------------------------
-      // WIDGET 3: HOUSE LOAD/EXPORT (BOTTOM RIGHT)
+      // WIDGET 3: HOUSE EXPORT/LOAD (BOTTOM RIGHT)
       // -------------------------------
-      if (id(house_load).has_state()) {
-        // Get house load value directly from sensor
-        float load = id(house_load).state;
+      
+      // Grid power < 0 means we're exporting to the grid
+      // Grid power > 0 means we're importing from the grid
+      bool is_exporting = (grid < 0);
+      
+      // Draw widget box
+      int grid_x = 165;
+      int grid_y = divider_y + 10;  // 10px below divider
+      int grid_w = 135;
+      int grid_h = half_height - 20;  // Use nearly half screen height
+      
+      // Use green for export, orange for import
+      Color box_color = is_exporting ? id(c_green) : id(c_orange);
+      it.rectangle(grid_x, grid_y, grid_w, grid_h, box_color);
+      
+      if (is_exporting) {
+        // EXPORT mode - we're sending power to the grid
+        it.print(grid_x + grid_w/2, grid_y + 20, id(arimo20), id(c_white), TextAlign::CENTER, "House Export");
         
-        // Debug the current value
-        ESP_LOGD("DISPLAY", "House load value: %.1f W", load);
+        // Show export value (absolute value of grid) with a + sign
+        float export_value = fabs(grid);
         
-        // IMPORTANT: The house load is negative when exporting power
-        bool is_exporting = (load < 0);
-        ESP_LOGD("DISPLAY", "Is exporting: %s", is_exporting ? "YES" : "NO");
-        
-        // Draw widget box
-        int load_x = 165;
-        int load_y = divider_y + 10;  // 10px below divider
-        int load_w = 135;
-        int load_h = half_height - 20;  // Use nearly half screen height
-        
-        // Use green for export, orange for load
-        Color box_color = is_exporting ? id(c_green) : id(c_orange);
-        it.rectangle(load_x, load_y, load_w, load_h, box_color);
-        
-        if (is_exporting) {
-          // EXPORT mode (negative value in sensor)
-          it.print(load_x + load_w/2, load_y + 20, id(arimo20), id(c_white), TextAlign::CENTER, "House Export");
-          
-          // Show absolute value with a + sign
-          float export_value = fabs(load);  // Convert to positive
-          
-          if (export_value < 1000) {
-            it.printf(load_x + load_w/2, load_y + load_h/2 + 10, id(roboto_med), id(c_white), 
-                    TextAlign::CENTER, "+%.1f W", export_value);
-          } else {
-            it.printf(load_x + load_w/2, load_y + load_h/2 + 10, id(roboto_med), id(c_white), 
-                    TextAlign::CENTER, "+%.1f kW", export_value/1000);
-          }
+        if (export_value < 1000) {
+          it.printf(grid_x + grid_w/2, grid_y + grid_h/2 + 10, id(roboto_med), id(c_white), 
+                  TextAlign::CENTER, "+%.1f W", export_value);
         } else {
-          // LOAD mode (positive value in sensor)
-          it.print(load_x + load_w/2, load_y + 20, id(arimo20), id(c_white), TextAlign::CENTER, "House Load");
-          
-          // Display as-is (already positive)
-          if (load < 1000) {
-            it.printf(load_x + load_w/2, load_y + load_h/2 + 10, id(roboto_med), id(c_white), 
-                    TextAlign::CENTER, "%.1f W", load);
-          } else {
-            it.printf(load_x + load_w/2, load_y + load_h/2 + 10, id(roboto_med), id(c_white), 
-                    TextAlign::CENTER, "%.1f kW", load/1000);
-          }
+          it.printf(grid_x + grid_w/2, grid_y + grid_h/2 + 10, id(roboto_med), id(c_white), 
+                  TextAlign::CENTER, "+%.1f kW", export_value/1000);
+        }
+      } else {
+        // LOAD mode - we're pulling power from the grid
+        it.print(grid_x + grid_w/2, grid_y + 20, id(arimo20), id(c_white), TextAlign::CENTER, "House Load");
+        
+        // Show import value directly
+        if (grid < 1000) {
+          it.printf(grid_x + grid_w/2, grid_y + grid_h/2 + 10, id(roboto_med), id(c_white), 
+                  TextAlign::CENTER, "%.1f W", grid);
+        } else {
+          it.printf(grid_x + grid_w/2, grid_y + grid_h/2 + 10, id(roboto_med), id(c_white), 
+                  TextAlign::CENTER, "%.1f kW", grid/1000);
         }
       }
