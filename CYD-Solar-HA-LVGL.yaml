@@ -65,9 +65,6 @@ sensor:
     entity_id: sensor.solarnet_power_photovoltaics
     unit_of_measurement: "W"
     accuracy_decimals: 0
-    on_value:
-      then:
-        - lvgl.widget.refresh: solar_val
   
   - platform: homeassistant
     name: "Grid Consumption"
@@ -75,9 +72,6 @@ sensor:
     entity_id: sensor.solarnet_power_grid_import
     unit_of_measurement: "W"
     accuracy_decimals: 0
-    on_value:
-      then:
-        - lvgl.widget.refresh: grid_val
         
   - platform: homeassistant
     name: "Grid Return"
@@ -85,9 +79,6 @@ sensor:
     entity_id: sensor.solarnet_power_grid_export
     unit_of_measurement: "W"
     accuracy_decimals: 0
-    on_value:
-      then:
-        - lvgl.widget.refresh: grid_val
 
   - platform: homeassistant
     name: "Home Consumption"
@@ -95,9 +86,6 @@ sensor:
     entity_id: sensor.smart_meter_63a_1_real_power
     unit_of_measurement: "W"
     accuracy_decimals: 0
-    on_value:
-      then:
-        - lvgl.widget.refresh: home_val
 
   - platform: homeassistant
     name: "Solar Autonomy"
@@ -105,9 +93,6 @@ sensor:
     entity_id: sensor.solarnet_relative_autonomy
     unit_of_measurement: "%"
     accuracy_decimals: 0
-    on_value:
-      then:
-        - lvgl.widget.refresh: header_lbl
 
   - platform: homeassistant
     name: "Battery Power"
@@ -115,9 +100,6 @@ sensor:
     entity_id: sensor.battery_power
     unit_of_measurement: "W"
     accuracy_decimals: 0
-    on_value:
-      then:
-        - lvgl.widget.refresh: battery_watts
 
   - platform: homeassistant
     name: "Battery SoC"
@@ -125,9 +107,6 @@ sensor:
     entity_id: sensor.battery_state_of_charge
     unit_of_measurement: "%"
     accuracy_decimals: 0
-    on_value:
-      then:
-        - lvgl.widget.refresh: battery_val
 
 # SPI Bus for Display and Touchscreen
 spi:
@@ -178,11 +157,15 @@ display:
       height: 240
     update_interval: never
 
-# Interval timer to drive flow arrow animations (400ms tick)
+# Interval timer to refresh all UI labels and animations periodically (400ms tick)
 interval:
   - interval: 400ms
     then:
-      - lvgl.widget.refresh: [solar_title, battery_title, grid_title, home_title]
+      - lvgl.widget.refresh: [
+          solar_title, battery_title, grid_title, home_title,
+          solar_val, battery_val, battery_watts, grid_val, home_val,
+          header_lbl
+        ]
 
 # LVGL Engine Configuration
 lvgl:
