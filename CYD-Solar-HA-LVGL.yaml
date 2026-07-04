@@ -40,6 +40,10 @@ font:
     size: 26
     bpp: 4
   - file: "gfonts://Roboto"
+    id: roboto_arrow
+    size: 32
+    bpp: 4
+  - file: "gfonts://Roboto"
     id: roboto_small
     size: 14
     bpp: 4
@@ -60,52 +64,39 @@ light:
 # Home Assistant sensors for energy distribution
 sensor:
   - platform: homeassistant
-    name: "Solar Production"
+    name: "Solar Power"
     id: solar_production
     entity_id: sensor.solarnet_power_photovoltaics
-    unit_of_measurement: "W"
-    accuracy_decimals: 0
+    accuracy_decimals: 2
   
   - platform: homeassistant
-    name: "Grid Consumption"
-    id: grid_consumption
-    entity_id: sensor.solarnet_power_grid_import
-    unit_of_measurement: "W"
-    accuracy_decimals: 0
+    name: "Grid Use"
+    id: grid_power
+    entity_id: sensor.solarnet_power_grid
+    accuracy_decimals: 2
         
   - platform: homeassistant
-    name: "Grid Return"
-    id: grid_return
-    entity_id: sensor.solarnet_power_grid_export
-    unit_of_measurement: "W"
-    accuracy_decimals: 0
+    name: "House Load"
+    id: house_load
+    entity_id: sensor.solarnet_power_load
+    accuracy_decimals: 2
 
   - platform: homeassistant
-    name: "Home Consumption"
-    id: home_consumption
-    entity_id: sensor.smart_meter_63a_1_real_power
-    unit_of_measurement: "W"
-    accuracy_decimals: 0
-
-  - platform: homeassistant
-    name: "Solar Autonomy"
-    id: solar_autonomy
-    entity_id: sensor.solarnet_relative_autonomy
-    unit_of_measurement: "%"
+    name: "Self Consumption"
+    id: self_consumption
+    entity_id: sensor.solarnet_relative_self_consumption
     accuracy_decimals: 0
 
   - platform: homeassistant
     name: "Battery Power"
     id: battery_power
     entity_id: sensor.battery_power
-    unit_of_measurement: "W"
-    accuracy_decimals: 0
+    accuracy_decimals: 2
 
   - platform: homeassistant
     name: "Battery SoC"
     id: battery_soc
     entity_id: sensor.battery_state_of_charge
-    unit_of_measurement: "%"
     accuracy_decimals: 0
 
 # SPI Bus for Display and Touchscreen
@@ -157,14 +148,16 @@ display:
       height: 240
     update_interval: never
 
-# Interval timer to refresh all UI labels and animations periodically (400ms tick)
+# Interval timer to refresh all dynamic UI labels and arrow animations (400ms tick)
 interval:
   - interval: 400ms
     then:
       - lvgl.widget.refresh: [
-          solar_title, battery_title, grid_title, home_title,
-          solar_val, battery_val, battery_watts, grid_val, home_val,
-          header_lbl
+          solar_val, solar_flow_lbl,
+          battery_val, battery_watts,
+          grid_val, grid_flow_lbl,
+          home_val, home_flow_lbl,
+          flow_solar, flow_battery, flow_grid, flow_solar_battery
         ]
 
 # LVGL Engine Configuration
@@ -189,15 +182,15 @@ lvgl:
     - id: main_page
       widgets:
         # -------------------------------------------------------------
-        # 1. Background Empty Cards (Drawn first, acting as backgrounds)
+        # 1. Background Empty Cards (Centered with 30px central gaps)
         # -------------------------------------------------------------
         # Solar Card (Top-Left)
         - obj:
             id: card_solar
             x: 10
-            y: 35
-            width: 145
-            height: 92
+            y: 10
+            width: 135
+            height: 95
             bg_color: 0x1A1510
             border_color: 0xE67E22
             border_width: 2
@@ -209,10 +202,10 @@ lvgl:
         # Battery Card (Top-Right)
         - obj:
             id: card_battery
-            x: 165
-            y: 35
-            width: 145
-            height: 92
+            x: 175
+            y: 10
+            width: 135
+            height: 95
             bg_color: 0x101A10
             border_color: 0x2ECC71
             border_width: 2
@@ -225,9 +218,9 @@ lvgl:
         - obj:
             id: card_grid
             x: 10
-            y: 138
-            width: 145
-            height: 92
+            y: 135
+            width: 135
+            height: 95
             bg_color: 0x10151A
             border_color: 0x3498DB
             border_width: 2
@@ -239,10 +232,10 @@ lvgl:
         # Home Card (Bottom-Right)
         - obj:
             id: card_home
-            x: 165
-            y: 138
-            width: 145
-            height: 92
+            x: 175
+            y: 135
+            width: 135
+            height: 95
             bg_color: 0x1A1010
             border_color: 0xE74C3C
             border_width: 2
@@ -252,91 +245,113 @@ lvgl:
             scrollable: false
 
         # -------------------------------------------------------------
-        # 2. Header and Card Labels (Drawn on top of background cards)
+        # 2. LED-style Dot Icons (Drawn on top of cards)
         # -------------------------------------------------------------
-        # Header Label showing title and Autonomy %
-        - label:
-            id: header_lbl
-            x: 10
-            y: 8
-            width: 300
-            height: 20
-            text_font: roboto_small
-            text_color: 0x888888
-            text: !lambda |-
-              float autonomy = id(solar_autonomy).has_state() && !std::isnan(id(solar_autonomy).state) ? id(solar_autonomy).state : 0.0f;
-              char buf[64];
-              snprintf(buf, sizeof(buf), "Solar Dashboard  |  Autonomy: %.0f%%", autonomy);
-              return std::string(buf);
+        - obj:
+            x: 20
+            y: 22
+            width: 8
+            height: 8
+            bg_color: 0xE67E22
+            radius: 4
+            border_width: 0
 
-        # SOLAR CARD WIDGETS
+        - obj:
+            x: 185
+            y: 22
+            width: 8
+            height: 8
+            bg_color: 0x2ECC71
+            radius: 4
+            border_width: 0
+
+        - obj:
+            x: 20
+            y: 147
+            width: 8
+            height: 8
+            bg_color: 0x3498DB
+            radius: 4
+            border_width: 0
+
+        - obj:
+            x: 185
+            y: 147
+            width: 8
+            height: 8
+            bg_color: 0xE74C3C
+            radius: 4
+            border_width: 0
+
+        # -------------------------------------------------------------
+        # 3. Card Title Labels (Shifted right to make room for LED dot icons)
+        # -------------------------------------------------------------
         - label:
-            id: solar_title
-            x: 16
-            y: 42
-            width: 133
-            height: 20
+            x: 32
+            y: 18
+            width: 100
+            height: 18
             text_color: 0x888888
             text_font: roboto_small
-            text: !lambda |-
-              float watts = id(solar_production).has_state() && !std::isnan(id(solar_production).state) ? id(solar_production).state : 0.0f;
-              if (watts > 10.0f) {
-                int frame = (millis() / 400) % 4;
-                if (frame == 0) return std::string("Solar -> System");
-                if (frame == 1) return std::string("Solar -> System  >");
-                if (frame == 2) return std::string("Solar -> System  >>");
-                return std::string("Solar -> System  >>>");
-              }
-              return std::string("Solar");
+            text: "Solar"
+
+        - label:
+            x: 197
+            y: 18
+            width: 100
+            height: 18
+            text_color: 0x888888
+            text_font: roboto_small
+            text: "Battery"
+
+        - label:
+            x: 32
+            y: 143
+            width: 100
+            height: 18
+            text_color: 0x888888
+            text_font: roboto_small
+            text: "Grid"
+
+        - label:
+            x: 197
+            y: 143
+            width: 100
+            height: 18
+            text_color: 0x888888
+            text_font: roboto_small
+            text: "Home"
+
+        # -------------------------------------------------------------
+        # 4. Card Value Labels (Vertically and Horizontally Centered)
+        # -------------------------------------------------------------
+        # Solar Value
         - label:
             id: solar_val
-            x: 16
-            y: 68
-            width: 133
+            x: 10
+            y: 42
+            width: 135
             height: 30
+            text_align: CENTER
             text_font: roboto_med
             text_color: 0xFFFFFF
             text: !lambda |-
               if (id(solar_production).has_state() && !std::isnan(id(solar_production).state)) {
-                float watts = id(solar_production).state;
-                float kW = watts / 1000.0f;
+                float kW = id(solar_production).state;
                 char buf[16];
                 snprintf(buf, sizeof(buf), "%.2f kW", kW);
                 return std::string(buf);
               }
               return std::string("N/A");
 
-        # BATTERY CARD WIDGETS
-        - label:
-            id: battery_title
-            x: 171
-            y: 42
-            width: 133
-            height: 20
-            text_color: 0x888888
-            text_font: roboto_small
-            text: !lambda |-
-              float watts = id(battery_power).has_state() && !std::isnan(id(battery_power).state) ? id(battery_power).state : 0.0f;
-              if (watts > 10.0f) { // Charging
-                int frame = (millis() / 400) % 4;
-                if (frame == 0) return std::string("System -> Battery");
-                if (frame == 1) return std::string("System -> Battery  >");
-                if (frame == 2) return std::string("System -> Battery  >>");
-                return std::string("System -> Battery  >>>");
-              } else if (watts < -10.0f) { // Discharging
-                int frame = (millis() / 400) % 4;
-                if (frame == 0) return std::string("Battery -> Home");
-                if (frame == 1) return std::string("Battery -> Home  >");
-                if (frame == 2) return std::string("Battery -> Home  >>");
-                return std::string("Battery -> Home  >>>");
-              }
-              return std::string("Battery");
+        # Battery Value (SoC %)
         - label:
             id: battery_val
-            x: 171
-            y: 68
-            width: 133
+            x: 175
+            y: 42
+            width: 135
             height: 30
+            text_align: CENTER
             text_font: roboto_med
             text_color: 0xFFFFFF
             text: !lambda |-
@@ -346,104 +361,193 @@ lvgl:
                 return std::string(buf);
               }
               return std::string("N/A");
+
+        # Grid Value (Absolute Net kW)
+        - label:
+            id: grid_val
+            x: 10
+            y: 167
+            width: 135
+            height: 30
+            text_align: CENTER
+            text_font: roboto_med
+            text_color: 0xFFFFFF
+            text: !lambda |-
+              if (id(grid_power).has_state() && !std::isnan(id(grid_power).state)) {
+                float kW = id(grid_power).state;
+                char buf[16];
+                snprintf(buf, sizeof(buf), "%.2f kW", std::abs(kW));
+                return std::string(buf);
+              }
+              return std::string("N/A");
+
+        # Home Value (Absolute kW Load)
+        - label:
+            id: home_val
+            x: 175
+            y: 167
+            width: 135
+            height: 30
+            text_align: CENTER
+            text_font: roboto_med
+            text_color: 0xFFFFFF
+            text: !lambda |-
+              if (id(house_load).has_state() && !std::isnan(id(house_load).state)) {
+                float kW = id(house_load).state;
+                char buf[16];
+                snprintf(buf, sizeof(buf), "%.2f kW", std::abs(kW));
+                return std::string(buf);
+              }
+              return std::string("N/A");
+
+        # -------------------------------------------------------------
+        # 5. Bottom Card Text Labels (Centered static info)
+        # -------------------------------------------------------------
+        # Solar Bottom Label (Self Consumption)
+        - label:
+            id: solar_flow_lbl
+            x: 10
+            y: 75
+            width: 135
+            height: 18
+            text_align: CENTER
+            text_font: roboto_small
+            text_color: 0x888888
+            text: !lambda |-
+              if (id(self_consumption).has_state() && !std::isnan(id(self_consumption).state)) {
+                char buf[32];
+                snprintf(buf, sizeof(buf), "Self Cons: %.0f%%", id(self_consumption).state);
+                return std::string(buf);
+              }
+              return std::string("Self Cons: N/A");
+
+        # Battery Bottom Label (Charge/Discharge Power)
         - label:
             id: battery_watts
-            x: 238
-            y: 44
-            width: 65
+            x: 175
+            y: 75
+            width: 135
             height: 18
+            text_align: CENTER
             text_font: roboto_small
             text_color: 0x888888
             text: !lambda |-
               if (id(battery_power).has_state() && !std::isnan(id(battery_power).state)) {
-                float watts = id(battery_power).state;
-                float kW = watts / 1000.0f;
-                char buf[16];
-                snprintf(buf, sizeof(buf), "%s%.2f kW", (kW >= 0 ? "+" : ""), kW);
-                return std::string(buf);
+                float kW = id(battery_power).state;
+                char val_buf[16];
+                snprintf(val_buf, sizeof(val_buf), "%s%.2f kW", (kW >= 0 ? "+" : ""), kW);
+                return std::string(val_buf);
+              }
+              return std::string("0.00 kW");
+
+        # Grid Bottom Label (Import/Export status)
+        - label:
+            id: grid_flow_lbl
+            x: 10
+            y: 200
+            width: 135
+            height: 18
+            text_align: CENTER
+            text_font: roboto_small
+            text_color: 0x888888
+            text: !lambda |-
+              if (id(grid_power).has_state() && !std::isnan(id(grid_power).state)) {
+                float kW = id(grid_power).state;
+                if (kW > 0.05f) return std::string("Importing");
+                if (kW < -0.05f) return std::string("Exporting");
+                return std::string("Idle");
               }
               return std::string("N/A");
 
-        # GRID CARD WIDGETS
+        # Home Bottom Label (Load status)
         - label:
-            id: grid_title
-            x: 16
-            y: 145
-            width: 133
-            height: 20
-            text_color: 0x888888
+            id: home_flow_lbl
+            x: 175
+            y: 200
+            width: 135
+            height: 18
+            text_align: CENTER
             text_font: roboto_small
+            text_color: 0x888888
             text: !lambda |-
-              float import_w = id(grid_consumption).has_state() && !std::isnan(id(grid_consumption).state) ? id(grid_consumption).state : 0.0f;
-              float export_w = id(grid_return).has_state() && !std::isnan(id(grid_return).state) ? id(grid_return).state : 0.0f;
-              float net = import_w - export_w;
-              if (net > 10.0f) { // Importing
-                int frame = (millis() / 400) % 4;
-                if (frame == 0) return std::string("Grid -> Home");
-                if (frame == 1) return std::string("Grid -> Home  >");
-                if (frame == 2) return std::string("Grid -> Home  >>");
-                return std::string("Grid -> Home  >>>");
-              } else if (net < -10.0f) { // Exporting
-                int frame = (millis() / 400) % 4;
-                if (frame == 0) return std::string("Solar -> Grid");
-                if (frame == 1) return std::string("Solar -> Grid  >");
-                if (frame == 2) return std::string("Solar -> Grid  >>");
-                return std::string("Solar -> Grid  >>>");
-              }
-              return std::string("Grid");
-        - label:
-            id: grid_val
-            x: 16
-            y: 171
-            width: 133
-            height: 30
-            text_font: roboto_med
-            text_color: 0xFFFFFF
-            text: !lambda |-
-              if (id(grid_consumption).has_state() && !std::isnan(id(grid_consumption).state) &&
-                  id(grid_return).has_state() && !std::isnan(id(grid_return).state)) {
-                float import_w = id(grid_consumption).state;
-                float export_w = id(grid_return).state;
-                float net_kW = (import_w - export_w) / 1000.0f;
-                char buf[16];
-                snprintf(buf, sizeof(buf), "%.2f kW", net_kW);
-                return std::string(buf);
+              if (id(house_load).has_state() && !std::isnan(id(house_load).state)) {
+                float kW = id(house_load).state;
+                return std::abs(kW) > 0.05f ? std::string("Active Load") : std::string("Idle");
               }
               return std::string("N/A");
 
-        # HOME CARD WIDGETS
+        # -------------------------------------------------------------
+        # 6. Inter-Card Flow Chevron Labels (Positioned in 30px gaps)
+        # -------------------------------------------------------------
+        # Large vertical flow arrow below Solar (Top-Left -> Bottom-Left)
         - label:
-            id: home_title
-            x: 171
-            y: 145
-            width: 133
-            height: 20
-            text_color: 0x888888
-            text_font: roboto_small
-            text: !lambda |-
-              float watts = id(home_consumption).has_state() && !std::isnan(id(home_consumption).state) ? id(home_consumption).state : 0.0f;
-              if (watts > 10.0f) {
-                int frame = (millis() / 400) % 4;
-                if (frame == 0) return std::string("System -> Home");
-                if (frame == 1) return std::string("System -> Home  >");
-                if (frame == 2) return std::string("System -> Home  >>");
-                return std::string("System -> Home  >>>");
-              }
-              return std::string("Home");
-        - label:
-            id: home_val
-            x: 171
-            y: 171
-            width: 133
+            id: flow_solar
+            x: 65
+            y: 104
+            width: 25
             height: 30
-            text_font: roboto_med
-            text_color: 0xFFFFFF
+            text_align: CENTER
+            text_font: roboto_arrow
+            text_color: 0xE67E22
             text: !lambda |-
-              if (id(home_consumption).has_state() && !std::isnan(id(home_consumption).state)) {
-                float watts = id(home_consumption).state;
-                float kW = watts / 1000.0f;
-                char buf[16];
-                snprintf(buf, sizeof(buf), "%.2f kW", kW);
-                return std::string(buf);
+              float kW = id(solar_production).has_state() && !std::isnan(id(solar_production).state) ? id(solar_production).state : 0.0f;
+              if (kW > 0.05f) {
+                return ((millis() / 400) % 2 == 0) ? std::string("v") : std::string(" ");
               }
-              return std::string("N/A");
+              return std::string(" ");
+
+        # Large vertical flow arrow below Battery (Top-Right <-> Bottom-Right)
+        - label:
+            id: flow_battery
+            x: 230
+            y: 104
+            width: 25
+            height: 30
+            text_align: CENTER
+            text_font: roboto_arrow
+            text_color: 0x2ECC71
+            text: !lambda |-
+              float kW = id(battery_power).has_state() && !std::isnan(id(battery_power).state) ? id(battery_power).state : 0.0f;
+              if (kW > 0.05f) { // Charging: flow goes up into battery
+                return ((millis() / 400) % 2 == 0) ? std::string("^") : std::string(" ");
+              } else if (kW < -0.05f) { // Discharging: flow goes down into home
+                return ((millis() / 400) % 2 == 0) ? std::string("v") : std::string(" ");
+              }
+              return std::string(" ");
+
+        # Large horizontal flow arrow between Grid and Home (Bottom-Left <-> Bottom-Right)
+        - label:
+            id: flow_grid
+            x: 147
+            y: 160
+            width: 26
+            height: 30
+            text_align: CENTER
+            text_font: roboto_arrow
+            text_color: 0x3498DB
+            text: !lambda |-
+              float kW = id(grid_power).has_state() && !std::isnan(id(grid_power).state) ? id(grid_power).state : 0.0f;
+              if (kW > 0.05f) { // Importing: flow goes right from grid to home
+                return ((millis() / 400) % 2 == 0) ? std::string(">") : std::string(" ");
+              } else if (kW < -0.05f) { // Exporting: flow goes left from home to grid
+                return ((millis() / 400) % 2 == 0) ? std::string("<") : std::string(" ");
+              }
+              return std::string(" ");
+
+        # Large horizontal flow arrow between Solar and Battery (Top-Left -> Top-Right)
+        - label:
+            id: flow_solar_battery
+            x: 147
+            y: 35
+            width: 26
+            height: 30
+            text_align: CENTER
+            text_font: roboto_arrow
+            text_color: 0xE67E22
+            text: !lambda |-
+              float solar_kW = id(solar_production).has_state() && !std::isnan(id(solar_production).state) ? id(solar_production).state : 0.0f;
+              float bat_kW = id(battery_power).has_state() && !std::isnan(id(battery_power).state) ? id(battery_power).state : 0.0f;
+              if (solar_kW > 0.05f && bat_kW > 0.05f) { // Solar active and battery charging
+                return ((millis() / 400) % 2 == 0) ? std::string(">") : std::string(" ");
+              }
+              return std::string(" ");
