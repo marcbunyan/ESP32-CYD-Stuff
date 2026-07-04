@@ -1,0 +1,426 @@
+esphome:
+  name: esphome-web-4620dc
+  friendly_name: Solar Dashboard
+  libraries:
+    - SPI
+
+esp32:
+  board: esp32dev
+  framework:
+    type: arduino
+
+globals:
+  - id: display_on
+    type: bool
+    restore_value: true
+    initial_value: 'true'
+
+wifi:
+  ssid: !secret wifi_ssid
+  password: !secret wifi_password
+
+logger:
+  level: DEBUG
+
+api:
+ota:
+  - platform: esphome
+
+color:
+  - id: c_black
+    hex: "000000"
+  - id: c_white
+    hex: "FFFFFF"
+  - id: c_red
+    hex: "FF0000"
+  - id: c_yellow
+    hex: "FFFF00"
+  - id: c_green
+    hex: "00FF00"
+  - id: c_grey
+    hex: "444444"
+  - id: c_blue
+    hex: "3498DB"
+  - id: c_orange
+    hex: "E67E22"
+  - id: c_light_grey
+    hex: "AAAAAA"
+
+font:
+  - file: "gfonts://Roboto"
+    id: roboto_xl
+    size: 42
+  - file: "gfonts://Arimo"
+    id: arimo20
+    size: 22
+  - file: "gfonts://Roboto"
+    id: roboto_med
+    size: 26
+  - file: "gfonts://Roboto"
+    id: roboto_small
+    size: 14
+
+# Backlight control
+output:
+  - platform: ledc
+    pin: GPIO21
+    id: backlight_pwm
+
+light:
+  - platform: monochromatic
+    output: backlight_pwm
+    name: "Display Backlight"
+    id: backlight
+    restore_mode: ALWAYS_ON
+
+# Home Assistant sensors for energy distribution
+sensor:
+  - platform: homeassistant
+    name: "Solar Production"
+    id: solar_production
+    entity_id: sensor.solarnet_power_photovoltaics
+    unit_of_measurement: "W"
+    accuracy_decimals: 0
+    on_value:
+      then:
+        - component.update: esp_display
+  
+  - platform: homeassistant
+    name: "Grid Consumption"
+    id: grid_consumption
+    entity_id: sensor.solarnet_power_grid_import
+    unit_of_measurement: "W"
+    accuracy_decimals: 0
+    on_value:
+      then:
+        - component.update: esp_display
+        
+  - platform: homeassistant
+    name: "Grid Return"
+    id: grid_return
+    entity_id: sensor.solarnet_power_grid_export
+    unit_of_measurement: "W"
+    accuracy_decimals: 0
+    on_value:
+      then:
+        - component.update: esp_display
+
+  - platform: homeassistant
+    name: "Home Consumption"
+    id: home_consumption
+    entity_id: sensor.smart_meter_63a_1_real_power
+    unit_of_measurement: "W"
+    accuracy_decimals: 0
+    on_value:
+      then:
+        - component.update: esp_display
+
+  - platform: homeassistant
+    name: "Solar Autonomy"
+    id: solar_autonomy
+    entity_id: sensor.solarnet_relative_autonomy
+    unit_of_measurement: "%"
+    accuracy_decimals: 0
+    on_value:
+      then:
+        - component.update: esp_display
+
+  - platform: homeassistant
+    name: "Battery Power"
+    id: battery_power
+    entity_id: sensor.battery_power
+    unit_of_measurement: "W"
+    accuracy_decimals: 0
+    on_value:
+      then:
+        - component.update: esp_display
+
+  - platform: homeassistant
+    name: "Battery SoC"
+    id: battery_soc
+    entity_id: sensor.battery_state_of_charge
+    unit_of_measurement: "%"
+    accuracy_decimals: 0
+    on_value:
+      then:
+        - component.update: esp_display
+
+# SPI Bus for Display and Touchscreen
+spi:
+  - id: tft
+    clk_pin: GPIO14
+    mosi_pin: GPIO13
+    miso_pin: GPIO12
+  - id: touch_spi
+    clk_pin: GPIO25
+    mosi_pin: GPIO32
+    miso_pin: GPIO39
+
+# Touchscreen Configuration for CYD
+touchscreen:
+  - platform: xpt2046
+    id: cyd_touchscreen
+    spi_id: touch_spi
+    cs_pin: GPIO33
+    interrupt_pin: GPIO36
+    threshold: 400
+    update_interval: 50ms
+    calibration:
+      x_min: 280
+      x_max: 3860
+      y_min: 340
+      y_max: 3860
+    transform:
+      swap_xy: true
+      mirror_x: true
+      mirror_y: true
+    on_touch:
+      then:
+        - lambda: |-
+            id(display_on) = !id(display_on);
+        - if:
+            condition:
+              lambda: 'return id(display_on);'
+            then:
+              - light.turn_on: backlight
+            else:
+              - light.turn_off: backlight
+        - component.update: esp_display
+
+# Display configuration 
+display:
+  - platform: ili9xxx
+    id: esp_display
+    model: ILI9341
+    spi_id: tft
+    cs_pin: GPIO15
+    dc_pin: GPIO2
+    invert_colors: false
+    color_palette: 8BIT
+    auto_clear_enabled: true
+    rotation: 0
+    dimensions: 
+      width: 320
+      height: 240
+    update_interval: 50ms
+    lambda: |-
+      // 1. Clear screen to Black
+      it.fill(id(c_black));
+
+      // 1.5. If the display is toggled off, exit early (do not draw anything)
+      if (!id(display_on)) {
+        return;
+      }
+
+      // 2. Extract power values with fallback for missing states (not blocking display)
+      bool has_solar = id(solar_production).has_state() && !std::isnan(id(solar_production).state);
+      float solar_prod = has_solar ? id(solar_production).state : 0.0f;
+
+      bool has_grid_import = id(grid_consumption).has_state() && !std::isnan(id(grid_consumption).state);
+      float grid_import = has_grid_import ? id(grid_consumption).state : 0.0f;
+
+      bool has_grid_export = id(grid_return).has_state() && !std::isnan(id(grid_return).state);
+      float grid_export = has_grid_export ? id(grid_return).state : 0.0f;
+
+      bool has_home = id(home_consumption).has_state() && !std::isnan(id(home_consumption).state);
+      float home_cons = has_home ? id(home_consumption).state : 0.0f;
+
+      bool has_bat_power = id(battery_power).has_state() && !std::isnan(id(battery_power).state);
+      float bat_power = has_bat_power ? id(battery_power).state : 0.0f;
+
+      bool has_bat_soc = id(battery_soc).has_state() && !std::isnan(id(battery_soc).state);
+      float bat_soc = has_bat_soc ? id(battery_soc).state : 0.0f;
+
+      bool has_autonomy = id(solar_autonomy).has_state() && !std::isnan(id(solar_autonomy).state);
+      float autonomy = has_autonomy ? id(solar_autonomy).state : 0.0f;
+
+      // Clamp power values to prevent negative inputs representing direction anomalies
+      if (solar_prod < 0) solar_prod = 0;
+      if (grid_import < 0) grid_import = 0;
+      if (grid_export < 0) grid_export = 0;
+      if (home_cons < 0) home_cons = 0;
+
+      // 4. Coordinates for layout geometry (320x240)
+      const int x_tl = 60,  y_tl = 60;   // Battery / Low-Carbon (Top-Left)
+      const int x_tr = 260, y_tr = 60;   // Solar (Top-Right)
+      const int x_bl = 60,  y_bl = 180;  // Grid (Bottom-Left)
+      const int x_br = 260, y_br = 180;  // Home (Bottom-Right)
+      const int x_c  = 160, y_c  = 120;  // Center Hub
+      const int r_node = 25;
+
+      // 5. Draw static connecting lines (faint grey border style)
+      it.line(x_tl, y_tl, x_c, y_c, id(c_grey));
+      it.line(x_tr, y_tr, x_c, y_c, id(c_grey));
+      it.line(x_bl, y_bl, x_c, y_c, id(c_grey));
+      it.line(x_br, y_br, x_c, y_c, id(c_grey));
+
+      // 6. Animation math and helper routines
+      // Interpolate coordinates along double-segment path via Center Hub
+      auto get_path_point = [](int x_start, int y_start, int x_mid, int y_mid, int x_end, int y_end, float u, int &x, int &y) {
+        if (u < 1.0f) {
+          x = x_start + (x_mid - x_start) * u;
+          y = y_start + (y_mid - y_start) * u;
+        } else {
+          float t = u - 1.0f;
+          x = x_mid + (x_end - x_mid) * t;
+          y = y_mid + (y_end - y_mid) * t;
+        }
+      };
+
+      // Speed calculation: scale animation speed with flow power
+      auto get_increment = [](float power) -> float {
+        if (power <= 10.0f) return 0.0f;
+        float p = std::min(power, 5000.0f);
+        // Map 0 - 5000W to frame increment of 0.005 - 0.035
+        return 0.005f + (p / 5000.0f) * 0.030f;
+      };
+
+      // Static tickers for flow animation paths
+      static float t_solar_home = 0.0f;
+      static float t_grid_home  = 0.0f;
+      static float t_solar_grid = 0.0f;
+      static float t_bat_home   = 0.0f;
+      static float t_solar_bat  = 0.0f;
+      static float t_grid_bat   = 0.0f;
+
+      // Determine routing power flow values
+      float solar_to_home = 0.0f;
+      float solar_to_grid = 0.0f;
+      float grid_to_home  = 0.0f;
+      float solar_to_battery = 0.0f;
+      float grid_to_battery  = 0.0f;
+      float battery_to_home  = 0.0f;
+
+      if (solar_prod > 10.0f) {
+        if (grid_export > 10.0f) {
+          solar_to_grid = grid_export;
+        }
+        if (has_bat_power && bat_power > 10.0f) {
+          solar_to_battery = std::min(solar_prod, bat_power);
+        }
+        solar_to_home = std::max(0.0f, solar_prod - solar_to_grid - solar_to_battery);
+        solar_to_home = std::min(solar_to_home, home_cons);
+      }
+
+      if (grid_import > 10.0f) {
+        if (has_bat_power && bat_power > 10.0f) {
+          grid_to_battery = std::max(0.0f, bat_power - solar_to_battery);
+        }
+        grid_to_home = std::max(0.0f, grid_import - grid_to_battery);
+        grid_to_home = std::min(grid_to_home, home_cons);
+      }
+
+      if (has_bat_power && bat_power < -10.0f) {
+        battery_to_home = std::min(std::abs(bat_power), home_cons);
+      }
+
+      // Increment tickers independently based on actual active power flows
+      t_solar_home = fmodf(t_solar_home + get_increment(solar_to_home), 1.0f);
+      t_grid_home  = fmodf(t_grid_home  + get_increment(grid_to_home), 1.0f);
+      t_solar_grid = fmodf(t_solar_grid + get_increment(solar_to_grid), 1.0f);
+      t_bat_home   = fmodf(t_bat_home   + get_increment(battery_to_home), 1.0f);
+      t_solar_bat  = fmodf(t_solar_bat  + get_increment(solar_to_battery), 1.0f);
+      t_grid_bat   = fmodf(t_grid_bat   + get_increment(grid_to_battery), 1.0f);
+
+      // Path drawing lambda function
+      auto draw_dots = [&](int x_start, int y_start, int x_mid, int y_mid, int x_end, int y_end, float ticker, Color color, float flow_power) {
+        if (flow_power <= 10.0f) return;
+        for (int i = 0; i < 3; i++) {
+          float offset = i * (2.0f / 3.0f);
+          float u = fmodf(ticker * 2.0f + offset, 2.0f);
+          int px, py;
+          get_path_point(x_start, y_start, x_mid, y_mid, x_end, y_end, u, px, py);
+          it.filled_circle(px, py, 3, color);
+        }
+      };
+
+      // 7. Draw animated particles
+      // Solar -> Home (Orange)
+      draw_dots(x_tr, y_tr, x_c, y_c, x_br, y_br, t_solar_home, id(c_orange), solar_to_home);
+      // Grid -> Home (Blue)
+      draw_dots(x_bl, y_bl, x_c, y_c, x_br, y_br, t_grid_home, id(c_blue), grid_to_home);
+      // Solar -> Grid (Green)
+      draw_dots(x_tr, y_tr, x_c, y_c, x_bl, y_bl, t_solar_grid, id(c_green), solar_to_grid);
+      // Battery -> Home (Green)
+      draw_dots(x_tl, y_tl, x_c, y_c, x_br, y_br, t_bat_home, id(c_green), battery_to_home);
+      // Solar -> Battery (Green)
+      draw_dots(x_tr, y_tr, x_c, y_c, x_tl, y_tl, t_solar_bat, id(c_green), solar_to_battery);
+      // Grid -> Battery (Blue)
+      draw_dots(x_bl, y_bl, x_c, y_c, x_tl, y_tl, t_grid_bat, id(c_blue), grid_to_battery);
+
+      // 8. Mask node overlapping parts with black circles to hide line endings and dot entry/exit
+      it.filled_circle(x_tl, y_tl, r_node - 1, id(c_black));
+      it.filled_circle(x_tr, y_tr, r_node - 1, id(c_black));
+      it.filled_circle(x_bl, y_bl, r_node - 1, id(c_black));
+      it.filled_circle(x_br, y_br, r_node - 1, id(c_black));
+      it.filled_circle(x_c,  y_c,  14, id(c_black));
+
+      // 9. Draw borders of nodes (active nodes are colored, inactive ones are grey)
+      it.circle(x_tl, y_tl, r_node, has_bat_soc ? id(c_green) : id(c_grey));
+      it.circle(x_tr, y_tr, r_node, has_solar ? id(c_orange) : id(c_grey));
+      it.circle(x_bl, y_bl, r_node, (has_grid_import || has_grid_export) ? id(c_blue) : id(c_grey));
+      it.circle(x_br, y_br, r_node, has_home ? id(c_red) : id(c_grey));
+      it.circle(x_c,  y_c,  15, has_autonomy ? id(c_light_grey) : id(c_grey));
+
+      // 10. Format and render text inside nodes
+      auto format_power = [](float watts) -> std::string {
+        char buf[16];
+        if (watts >= 1000.0f) {
+          snprintf(buf, sizeof(buf), "%.1fkW", watts / 1000.0f);
+        } else {
+          snprintf(buf, sizeof(buf), "%.0fW", watts);
+        }
+        return std::string(buf);
+      };
+
+      // Solar Node Details
+      it.print(x_tr, y_tr - 7, id(roboto_small), id(c_light_grey), TextAlign::CENTER, "Solar");
+      if (has_solar) {
+        it.print(x_tr, y_tr + 7, id(roboto_small), id(c_white), TextAlign::CENTER, format_power(solar_prod).c_str());
+      } else {
+        it.print(x_tr, y_tr + 7, id(roboto_small), id(c_grey), TextAlign::CENTER, "N/A");
+      }
+
+      // Grid Node Details (Net power: positive is importing, negative is exporting)
+      it.print(x_bl, y_bl - 7, id(roboto_small), id(c_light_grey), TextAlign::CENTER, "Grid");
+      if (has_grid_import || has_grid_export) {
+        float net_grid = grid_import - grid_export;
+        std::string grid_str = format_power(std::abs(net_grid));
+        if (net_grid < 0) {
+          grid_str = "-" + grid_str;
+        }
+        it.print(x_bl, y_bl + 7, id(roboto_small), (net_grid < 0) ? id(c_green) : id(c_white), TextAlign::CENTER, grid_str.c_str());
+      } else {
+        it.print(x_bl, y_bl + 7, id(roboto_small), id(c_grey), TextAlign::CENTER, "N/A");
+      }
+
+      // Home Node Details
+      it.print(x_br, y_br - 7, id(roboto_small), id(c_light_grey), TextAlign::CENTER, "Home");
+      if (has_home) {
+        it.print(x_br, y_br + 7, id(roboto_small), id(c_white), TextAlign::CENTER, format_power(home_cons).c_str());
+      } else {
+        it.print(x_br, y_br + 7, id(roboto_small), id(c_grey), TextAlign::CENTER, "N/A");
+      }
+
+      // Battery Node Details
+      it.print(x_tl, y_tl - 7, id(roboto_small), id(c_light_grey), TextAlign::CENTER, "Battery");
+      if (has_bat_soc) {
+        it.printf(x_tl, y_tl + 7, id(roboto_small), id(c_white), TextAlign::CENTER, "%.0f%%", bat_soc);
+      } else {
+        it.print(x_tl, y_tl + 7, id(roboto_small), id(c_grey), TextAlign::CENTER, "N/A");
+      }
+
+      // Center Hub details (Autonomy %)
+      if (has_autonomy) {
+        it.printf(x_c, y_c, id(roboto_small), id(c_white), TextAlign::CENTER, "%.0f%%", autonomy);
+      } else {
+        it.print(x_c, y_c, id(roboto_small), id(c_grey), TextAlign::CENTER, "-");
+      }
+
+      // 11. Draw HA connection status indicator at the bottom
+      bool any_connected = has_solar || has_grid_import || has_grid_export || has_home || has_bat_power || has_bat_soc || has_autonomy;
+      if (!any_connected) {
+        it.print(160, 226, id(roboto_small), id(c_red), TextAlign::CENTER, "HA Connection Offline");
+      } else {
+        it.print(160, 226, id(roboto_small), id(c_grey), TextAlign::CENTER, "HA Connected");
+      }
